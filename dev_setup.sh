@@ -1,12 +1,12 @@
 cd ..
-git clone https://github.com/NVlabs/nvdiffrast.git
-git clone https://github.com/NVlabs/tiny-cuda-nn.git
+git clone git@github.com:565353780/base-gs-trainer.git
+git clone --depth 1 https://github.com/facebookresearch/pytorch3d.git
+git clone --depth 1 --recursive https://github.com/NVlabs/tiny-cuda-nn.git
 
-pip install torch==2.1.2 torchvision==0.16.2
+cd base-gs-trainer
+./dev_setup.sh
 
-pip install numpy==1.26.4
-
-cd nvdiffrast
+cd ../pytorch3d
 python setup.py install
 
 cd ../tiny-cuda-nn/bindings/torch
