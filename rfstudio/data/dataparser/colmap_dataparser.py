@@ -99,6 +99,35 @@ def read_cameras_binary(path_to_model_file: Path) -> Dict[int, Tuple[float, floa
             results[camera_id] = (fx, fy, cx, cy, width, height)
         return results
 
+def read_intrinsics_text(path: Path) -> Dict[int, Tuple[float, float, float, float, int, int]]:
+    """
+    Taken from https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
+    Returns same format as read_cameras_binary: camera_id -> (fx, fy, cx, cy, width, height).
+    """
+    cameras = {}
+    with open(path, "r") as fid:
+        while True:
+            line = fid.readline()
+            if not line:
+                break
+            line = line.strip()
+            if len(line) > 0 and line[0] != "#":
+                elems = line.split()
+                camera_id = int(elems[0])
+                model = elems[1]
+                assert model in ("SIMPLE_PINHOLE", "PINHOLE"), (
+                    "Only support SIMPLE_PINHOLE and PINHOLE, " f"but model = {model} received"
+                )
+                width = int(elems[2])
+                height = int(elems[3])
+                params = tuple(map(float, elems[4:]))
+                if model == "SIMPLE_PINHOLE":
+                    f, cx, cy = params
+                    fx, fy = f, f
+                else:
+                    fx, fy, cx, cy = params
+                cameras[camera_id] = (fx, fy, cx, cy, width, height)
+    return cameras
 
 def read_images_binary(path_to_model_file: Path) -> List[Tuple[int, str, Tensor, int]]:
     """
@@ -133,6 +162,35 @@ def read_images_binary(path_to_model_file: Path) -> List[Tuple[int, str, Tensor,
     g = ((image_id, Path(image_name).name, c2w, camera_id) for image_id, (image_name, c2w, camera_id) in images.items())
     return list(sorted(g, key=lambda x: x[1]))
 
+def read_extrinsics_text(path: Path) -> List[Tuple[int, str, Tensor, int]]:
+    """
+    Taken from https://github.com/colmap/colmap/blob/dev/scripts/python/read_write_model.py
+    Returns same format as read_images_binary: list of (image_id, image_name, c2w, camera_id), sorted by image name.
+    """
+    images = {}
+    with open(path, "r") as fid:
+        while True:
+            line = fid.readline()
+            if not line:
+                break
+            line = line.strip()
+            if len(line) > 0 and line[0] != "#":
+                elems = line.split()
+                image_id = int(elems[0])
+                qvec = np.array(tuple(map(float, elems[1:5])))
+                tvec = np.array(tuple(map(float, elems[5:8])))
+                camera_id = int(elems[8])
+                image_name = elems[9]
+                elems = fid.readline().split()
+                c2w = np.zeros((3, 4))
+                R = qvec2rotmat(qvec)
+                T = np.array(tvec)
+                c2w[:, :3] = R.T
+                c2w[:, 3] = R.T @ -T
+                c2w[:, 1:3] *= -1
+                images[image_id] = (Path(image_name).name, torch.from_numpy(c2w).float(), camera_id)
+    g = ((image_id, image_name, c2w, camera_id) for image_id, (image_name, c2w, camera_id) in images.items())
+    return list(sorted(g, key=lambda x: x[1]))
 
 def read_points3D_binary(path_to_model_file: Path) -> Tuple[Tensor, Tensor, Tensor]:
     """
@@ -204,8 +262,8 @@ class ColmapDataparser(BaseDataparser[Cameras, RGBImages, SfMPoints]):
     ) -> Tuple[Indexable[Cameras], Indexable[RGBImages], SfMPoints]:
 
         recon_path = path / 'sparse' / '0'
-        camera_lst = read_cameras_binary(recon_path / 'cameras.bin')
-        meta = read_images_binary(recon_path / 'images.bin')
+        camera_lst = read_intrinsics_text(recon_path / 'cameras.txt')
+        meta = read_extrinsics_text(recon_path / 'images.txt')
         assert len(meta) >= 10
         split_ratio_sum = self.train_split_ratio + self.val_split_ratio + self.test_split_ratio
         if split == 'train':
@@ -262,13 +320,7 @@ class ColmapDataparser(BaseDataparser[Cameras, RGBImages, SfMPoints]):
             camera_id = meta[indices[i]][3]
             fx, fy, cx, cy, width, height = camera_lst[camera_id]
             max_size = max(max_size, width, height)
-        if self.downsample is None:
-            downsample = 1
-            while max_size > 1600:
-                max_size /= 2
-                downsample *= 2
-        else:
-            downsample = self.downsample
+        downsample = 1
         for i in range(N):
             camera_id = meta[indices[i]][3]
             fx, fy, cx, cy, width, height = camera_lst[camera_id]
@@ -303,8 +355,8 @@ class ColmapDataparser(BaseDataparser[Cameras, RGBImages, SfMPoints]):
     @staticmethod
     def recognize(path: Path) -> bool:
         paths = [
-            path / 'sparse' / '0' / 'cameras.bin',
-            path / 'sparse' / '0' / 'images.bin',
-            path / 'sparse' / '0' / 'points3D.bin',
+            path / 'sparse' / '0' / 'cameras.txt',
+            path / 'sparse' / '0' / 'images.txt',
+            path / 'sparse' / '0' / 'points3D.ply',
         ]
         return all([p.exists() for p in paths])
